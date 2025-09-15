@@ -1,0 +1,364 @@
+# Supabase Backup System
+
+A comprehensive backup solution for multiple Supabase projects with automated scheduling, monitoring, and N8N integration for real-time notifications.
+
+## Overview
+
+This system provides automated daily backups for multiple Supabase projects with:
+- Complete database dumps using PostgreSQL 17
+- Storage bucket metadata backup
+- Authentication user data backup
+- Automated cleanup (30-day retention)
+- Real-time monitoring via N8N webhook integration
+- Comprehensive logging and error reporting
+
+## Architecture
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Cron Scheduler │    │  Backup Wrapper  │    │ N8N Webhook     │
+│   (Root)        │───▶│  Script          │───▶│ Notifications   │
+│   Daily 2:00 AM │    │                  │    │ "Sproutify      │
+└─────────────────┘    └──────────────────┘    │ Backup          │
+                              │                │ Notifications"  │
+                              ▼                └─────────────────┘
+                    ┌──────────────────┐
+                    │ Individual       │
+                    │ Project Scripts  │
+                    └──────────────────┘
+                              │
+                    ┌─────────┴─────────┐
+                    ▼                   ▼
+            ┌──────────────┐    ┌──────────────┐
+            │ Sproutify    │    │ Farm Project │
+            │ School       │    │ Backup       │
+            │ Backup       │    │              │
+            └──────────────┘    └──────────────┘
+                    │                   │
+                    ▼                   ▼
+            ┌──────────────┐    ┌──────────────┐
+            │ Database     │    │ Database     │
+            │ Storage      │    │ Storage      │
+            │ Auth Data    │    │ Auth Data    │
+            └──────────────┘    └──────────────┘
+```
+
+## System Components
+
+### Projects
+- **Sproutify School**: `cqrjesmpwaqvmssrdeoc.supabase.co`
+- **Farm**: `qffmtkmetkfysmqmughg.supabase.co`
+
+### Core Scripts
+- **Individual Project Scripts**: Handle single project backups
+- **Multi-Project Wrapper**: Orchestrates all backups and reporting
+- **Environment Configuration**: Secure credential storage
+
+## File Structure
+
+```
+/home/dev2/
+├── .supabase-backup.env           # Secure credentials
+├── supabase-backup-single.sh      # Sproutify School backup
+├── supabase-backup-farm.sh        # Farm project backup
+├── backup-status.sh               # Status checking utility
+└── webhook-reporter.sh            # N8N reporting functions
+
+/usr/local/bin/
+└── backup-with-reporting.sh       # Main wrapper script (root-owned)
+
+/home/backups/supabase/
+├── sproutify_school/
+│   └── YYYYMMDD_HHMMSS/           # Timestamped backup directories
+│       ├── db_YYYYMMDD_HHMMSS.dump.gz
+│       ├── storage_buckets_YYYYMMDD_HHMMSS.json
+│       ├── auth_users_YYYYMMDD_HHMMSS.json
+│       ├── bucket_objects/         # Per-bucket object listings
+│       ├── backup_info.txt
+│       └── backup.log
+└── farm/
+    └── YYYYMMDD_HHMMSS/           # Same structure as above
+```
+
+## Configuration Files
+
+### Environment Configuration (`/home/dev2/.supabase-backup.env`)
+```bash
+# Sproutify School Project
+SPROUTIFY_PROJECT_REF=cqrjesmpwaqvmssrdeoc
+SPROUTIFY_DB_PASSWORD=your_db_password
+SPROUTIFY_SERVICE_ROLE_KEY=your_service_role_key
+SPROUTIFY_DESCRIPTION="Sproutify School Project"
+
+# Farm Project
+FARM_PROJECT_REF=qffmtkmetkfysmqmughg
+FARM_DB_PASSWORD=your_db_password
+FARM_SERVICE_ROLE_KEY=your_service_role_key
+FARM_DESCRIPTION="Farm Project"
+```
+
+### Cron Schedule (Root)
+```bash
+# Daily Supabase backup at 2 AM with reporting to N8N
+0 2 * * * /usr/local/bin/backup-with-reporting.sh >/var/log/backup-wrapper.log 2>&1
+```
+
+## Backup Process Flow
+
+### 1. Scheduled Execution
+- Root cron triggers daily at 2:00 AM
+- Wrapper script coordinates multi-project backup
+
+### 2. Individual Project Backup
+Each project backup includes:
+
+#### Database Backup
+- Uses PostgreSQL 17 via Docker with host networking
+- Custom format with compression (gzip)
+- SSL-enabled connection to Supabase
+- Connection string: `postgresql://postgres:PASSWORD@db.PROJECT_REF.supabase.co:5432/postgres?sslmode=require`
+
+#### Storage Metadata
+- Bucket list via Storage API
+- Per-bucket object listings
+- Metadata stored as JSON
+
+#### Authentication Data
+- User list via Auth API (admin endpoint)
+- Exported as JSON with pagination support
+
+### 3. Cleanup and Reporting
+- Automatic deletion of backups older than 30 days
+- Comprehensive logging to individual backup directories
+- System metrics collection (disk usage, memory, load average)
+
+### 4. N8N Integration
+Webhook payload sent to: `https://n8n.sproutify.app/webhook/91deb5fa-7546-4293-b8c3-f1ded3f062ac`
+
+#### Success Payload Structure
+```json
+{
+  "type": "backup_report",
+  "hostname": "dev2-HP-Z240-SFF-Workstation",
+  "timestamp": "2025-09-15T14:26:22-04:00",
+  "backup": {
+    "status": "success",
+    "duration_seconds": 39,
+    "exit_code": 0,
+    "error_message": "",
+    "projects": {
+      "sproutify_school": {
+        "exit_code": 0,
+        "duration_seconds": 21,
+        "backup_size": "204K",
+        "backup_location": "/home/backups/supabase/sproutify_school/20250915_142542"
+      },
+      "farm": {
+        "exit_code": 0,
+        "duration_seconds": 18,
+        "backup_size": "144K",
+        "backup_location": "/home/backups/supabase/farm/20250915_142603"
+      }
+    }
+  },
+  "system": {
+    "disk_usage": {
+      "backup_drive": {
+        "filesystem": "/dev/nvme0n1p2",
+        "size": "468G",
+        "used": "19G",
+        "available": "426G",
+        "use_percent": "5%"
+      },
+      "root_drive": {
+        "filesystem": "/dev/nvme0n1p2", 
+        "size": "468G",
+        "used": "19G",
+        "available": "426G",
+        "use_percent": "5%"
+      }
+    },
+    "load_average": "0.00, 0.14, 0.33",
+    "memory_usage": "1.4Gi/15Gi (13Gi available)"
+  }
+}
+```
+
+## Installation
+
+### Prerequisites
+- Ubuntu 20.04+ with Docker installed
+- PostgreSQL client tools
+- curl and jq packages
+- Supabase project credentials
+
+### Setup Steps
+
+1. **Install Dependencies**
+```bash
+sudo apt update
+sudo apt install postgresql-client curl jq
+sudo snap install docker
+```
+
+2. **Create Directory Structure**
+```bash
+sudo mkdir -p /home/backups/supabase/{sproutify_school,farm}
+sudo chown -R dev2:dev2 /home/backups/supabase
+```
+
+3. **Configure Environment**
+```bash
+cp .env.example /home/dev2/.supabase-backup.env
+chmod 600 /home/dev2/.supabase-backup.env
+# Edit with actual credentials
+```
+
+4. **Install Scripts**
+```bash
+# Copy individual project scripts
+cp supabase-backup-*.sh /home/dev2/
+chmod +x /home/dev2/supabase-backup-*.sh
+
+# Install wrapper script
+sudo cp backup-with-reporting.sh /usr/local/bin/
+sudo chmod +x /usr/local/bin/backup-with-reporting.sh
+```
+
+5. **Setup Automation**
+```bash
+sudo crontab -e
+# Add: 0 2 * * * /usr/local/bin/backup-with-reporting.sh >/var/log/backup-wrapper.log 2>&1
+```
+
+## Usage
+
+### Manual Backup Commands
+
+```bash
+# Individual project backups
+./supabase-backup-single.sh
+./supabase-backup-farm.sh
+
+# Full system backup with N8N reporting
+sudo /usr/local/bin/backup-with-reporting.sh
+
+# Check backup status
+./backup-status.sh
+```
+
+### Monitoring
+
+#### Log Locations
+- **Individual backups**: `/home/backups/supabase/PROJECT/TIMESTAMP/backup.log`
+- **Wrapper script**: `/var/log/backup-wrapper.log`
+- **System logs**: `journalctl -u cron`
+
+#### Via Cockpit Web Interface
+1. **Files**: Browse `/home/backups/supabase/` for backup contents
+2. **Logs**: Filter for "backup" to view backup-related logs
+3. **Storage**: Monitor disk usage of backup directories
+4. **Terminal**: Execute manual backup commands
+
+## Technical Details
+
+### Connection Methods
+- **Database**: Direct connection to `db.PROJECT_REF.supabase.co:5432` with SSL
+- **APIs**: HTTPS to `PROJECT_REF.supabase.co` endpoints
+- **Docker Networking**: Host network mode for IPv6 compatibility
+
+### Security Considerations
+- Environment file permissions: `600` (owner read/write only)
+- Service role keys stored securely in environment file
+- No credentials in script files or logs
+- Backup files readable only by backup user
+
+### Error Handling
+- Exit code propagation from individual scripts
+- Comprehensive error logging
+- Failed backup notifications via N8N webhook
+- Automatic retry mechanisms built into scripts
+
+### Performance
+- Typical backup times: 15-25 seconds per project
+- Backup sizes: ~200KB per project (small datasets)
+- Parallel execution: Projects backed up sequentially
+- Resource usage: Minimal CPU, ~100MB memory during backup
+
+## Troubleshooting
+
+### Common Issues
+
+#### Permission Errors
+```bash
+# Fix backup directory permissions
+sudo chown -R dev2:dev2 /home/backups/supabase
+chmod 755 /home/backups/supabase
+```
+
+#### Docker Connection Issues
+```bash
+# Add user to docker group
+sudo usermod -aG docker dev2
+# Logout and login again
+```
+
+#### Database Connection Failures
+- Verify credentials in `.supabase-backup.env`
+- Check Supabase project status
+- Confirm network connectivity to `db.PROJECT_REF.supabase.co`
+
+#### N8N Webhook Failures
+- Verify webhook URL accessibility
+- Check N8N workflow "Sproutify Backup Notifications" status
+- Review network connectivity
+
+### Recovery Procedures
+
+#### Database Restore
+```bash
+# Extract and restore database backup
+gunzip /path/to/backup/db_TIMESTAMP.dump.gz
+pg_restore -h HOST -p PORT -U USER -d DATABASE /path/to/backup/db_TIMESTAMP.dump
+```
+
+#### Storage Metadata Review
+```bash
+# View storage bucket information
+cat /path/to/backup/storage_buckets_TIMESTAMP.json | jq '.'
+
+# View specific bucket contents
+cat /path/to/backup/bucket_objects/BUCKET_NAME_objects.json | jq '.'
+```
+
+## Maintenance
+
+### Regular Tasks
+- Monitor disk usage of backup directories
+- Review backup logs for warnings or errors
+- Verify N8N webhook delivery success
+- Test restoration procedures periodically
+
+### Updates
+- Update PostgreSQL client tools as needed
+- Review and update Supabase API keys annually
+- Monitor Supabase service changes that might affect backup procedures
+
+## Support
+
+### Logs and Diagnostics
+```bash
+# View recent backup activity
+sudo tail -f /var/log/backup-wrapper.log
+
+# Check cron execution
+sudo journalctl -u cron | grep backup
+
+# System resource usage during backup
+./backup-status.sh
+```
+
+### N8N Integration
+- Workflow Name: "Sproutify Backup Notifications"
+- Webhook URL: `https://n8n.sproutify.app/webhook/91deb5fa-7546-4293-b8c3-f1ded3f062ac`
+- Payload Type: JSON with backup status and system metrics
